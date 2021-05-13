@@ -96,7 +96,7 @@ int getWindowSize(int *rows, int *cols) {  // get the size of terminal
 struct abuf {
 	char *b;
 	int len;
-}
+};  // remember to add a ';'
 
 #define ABUF_INIT {NULL, 0}
 
@@ -114,24 +114,30 @@ void abFree(struct abuf *ab) {
 }
 
 /*** output ***/
-void editorDrawRows() {  // Draw tildes
+void editorDrawRows(struct abuf *ab) {  // Draw tildes
 	int y;
 	for (y = 0; y < E.screenrows; y++) {
 		// no '/r' for the last line (otherwise row down 1 more line)
-		write(STDOUT_FILENO, "~", 1);
+		abAppend(ab, "~", 1);
 		
 		if (y < E.screenrows - 1) {
-			write(STDOUT_FILENO, "\r\n", 2);
+			abAppend(ab, "\r\n", 2);
 		}
 	}
 }
 
 void editorRefreshScreen() {
-	write(STDOUT_FILENO, "\x1b[2J", 4);  // clear the screen
-	write(STDOUT_FILENO, "\x1b[H", 3);  // put cursor to top-left
+	struct abuf ab = ABUF_INIT;
 	
-	editorDrawRows();
-	write(STDOUT_FILENO, "\x1b[H", 3);
+	abAppend(&ab, "\x1b[2J", 4);  // clear the screen
+	abAppend(&ab, "\x1b[H", 3);  // put cursor to top-left
+	
+	editorDrawRows(&ab);
+	
+	abAppend(&ab, "\x1b[H", 3);
+	
+	write(STDOUT_FILENO, ab.b, ab.len);
+	abFree(&ab);
 }
 
 /*** input ***/
