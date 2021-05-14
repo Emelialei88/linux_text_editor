@@ -41,6 +41,7 @@ typedef struct erow {  // store a row
 
 struct editorConfig {
 	int cx, cy;
+	int rowoff;
 	int screenrows;
 	int screencols;
 	int numrows;
@@ -217,11 +218,21 @@ void abFree(struct abuf *ab) {
 
 /*** output ***/
 
+void editorScroll() {
+	if (E.cy < E.rowoff) {  // check if the cursor is above the visible window
+		E.rowoff = E.cy;  // scroll up
+	}
+	if (E.cy >= E.rowoff + E.screenrows) {  // past the bottom
+		E.rowoff = E.cy - E.screenrows + 1;
+	}
+}
+
 void editorDrawRows(struct abuf *ab) {  // Draw tildes
 	int y;
 	for (y = 0; y < E.screenrows; y++) {
+		int filerow = y + E.rowoff;
+		if (filerow >= E.numrows) {
 		// no '/r' for the last line (otherwise row down 1 more line)
-		if (y >= E.numrows) {
 			if (E.numrows == 0 && y == E.screenrows / 3) {  // print welcome msg 
 				char welcome[80];
 				int welcomelen = snprintf(welcome, sizeof(welcome),
@@ -238,9 +249,9 @@ void editorDrawRows(struct abuf *ab) {  // Draw tildes
 				abAppend(ab, "~", 1);
 			}
 		} else {
-			int len = E.row[y].size;
+			int len = E.row[filerow].size;
 			if (len > E.screencols) len = E.screencols;
-			abAppend(ab, E.row[y].chars, len);
+			abAppend(ab, E.row[filerow].chars, len);
 		}
 		
 		abAppend(ab, "\x1b[K", 3);  // erases the part of the line to the right of the cursor (default mode)
@@ -251,6 +262,8 @@ void editorDrawRows(struct abuf *ab) {  // Draw tildes
 }
 
 void editorRefreshScreen() {
+	editorScroll();
+	
 	struct abuf ab = ABUF_INIT;
 	
 	abAppend(&ab, "\x1b[?25l", 6);  // hide the cursor when repainting
@@ -259,7 +272,7 @@ void editorRefreshScreen() {
 	editorDrawRows(&ab);
 	
 	char buf[32];
-	snprintf(buf, sizeof(buf), "\x1b[%d;%dH", E.cy + 1, E.cx + 1);  // change the old H cmd into one with args, add 1 so 0->1
+	snprintf(buf, sizeof(buf), "\x1b[%d;%dH", (E.cy - E.rowoff) + 1, E.cx + 1);  // change the old H cmd into one with args, add 1 so 0->1; E.cy refers to the pos in the file, but we have to get the pos on the screen
 	abAppend(&ab, buf, strlen(buf));	
 	
 	abAppend(&ab, "\x1b[?25h", 6);  // show the cursor
@@ -288,7 +301,7 @@ void editorMoveCursor(int key) {
 			}
 			break;
 		case ARROW_DOWN:
-			if (E.cy != E.screenrows - 1) {
+			if (E.cy < E.numrows) {  // cursor can advance past the btm of the screen, but not the
 				E.cy++;
 			}
 			break;
@@ -339,6 +352,7 @@ void editorProcessKeypress() {  // mapping keys to editor functions
 void initEditor() {
 	E.cx = 0;
 	E.cy = 0;
+	E.rowoff = 0;
 	E.numrows = 0;
 	E.row = NULL;
 
