@@ -6,6 +6,7 @@
 
 #include <ctype.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <stdio.h>
 #include <stdarg.h>
 #include <stdlib.h>
@@ -24,6 +25,7 @@
 #define CTRL_KEY(k) ((k) & 0x1f)
 
 enum editorKey {
+	BACKSPACE = 127,
 	ARROW_LEFT = 1000,
 	ARROW_RIGHT,
 	ARROW_UP,
@@ -60,6 +62,10 @@ struct editorConfig {
 };
 
 struct editorConfig E;
+
+/*** prototypes ***/
+
+void editorSetStatusMessage(const char *fmt, ...);
 
 /*** terminal ***/
 void die(const char *s) {
@@ -185,7 +191,7 @@ int editorRowCxToRx(erow *row, int cx) {  // calculate E.rx properly
 	return rx;
 }
 
-void editorUpdateRow(erow *row) {  // replace all the tabs int o KILO_TAB_STOP spaces
+void editorUpdateRow(erow *row) {  // update a row and replace all the tabs int o KILO_TAB_STOP spaces
 	int tabs = 0;
 	int j;
 	for (j = 0; j < row->size; j++) 
@@ -207,7 +213,7 @@ void editorUpdateRow(erow *row) {  // replace all the tabs int o KILO_TAB_STOP s
 	row->rsize = idx;
 }
 
-void editorAppendRow(char *s, size_t len) {
+void editorAppendRow(char *s, size_t len) {  // append a row (s) in struct E
 	E.row = realloc(E.row, sizeof(erow) * (E.numrows + 1));
 
 	int at = E.numrows;
@@ -223,7 +229,45 @@ void editorAppendRow(char *s, size_t len) {
 	E.numrows++;
 }
 
+void editorRowInsertChar(erow *row, int at, int c) {  // insert a char c in the give row & place (at)
+	if (at < 0 || at > row->size) at = row->size;
+	row->chars = realloc(row->chars, row->size + 2);
+	memmove(&row->chars[at+1], &row->chars[at], row->size - at + 1);
+	row->size++;
+	row->chars[at] = c;
+	editorUpdateRow(row);
+}
+
+/*** editor operations ***/
+
+void editorInsertChar(int c) {
+	if (E.cy == E.numrows) {
+		editorAppendRow("", 0);
+	}
+	editorRowInsertChar(&E.row[E.cy], E.cx, c);
+	E.cx++;
+}
+
 /*** file i/o ***/
+
+char *editorRowsToString(int *buflen) {  // convert erow array to a string
+	int totlen = 0;
+	int j;
+	for (j = 0; j < E.numrows; j++) 
+		totlen += E.row[j].size + 1;
+	*buflen = totlen;
+	
+	char *buf = malloc(totlen);
+	char *p = buf;
+	for (j = 0; j < E.numrows; j++) {
+		memcpy(p, E.row[j].chars, E.row[j].size);
+		p += E.row[j].size;
+		*p = '\n';
+		p++;
+	}
+	
+	return buf;
+}
 
 void editorOpen(char *filename) {
 	free(E.filename);
@@ -244,6 +288,28 @@ void editorOpen(char *filename) {
 	}
 	free(line);
 	fclose(fp);	
+}
+
+void editorSave() {  // save an existing file
+	if (E.filename == NULL) return;
+	
+	int len;
+	char *buf = editorRowsToString(&len);
+	
+	int fd = open(E.filename, O_RDWR | O_CREAT, 0644);
+	if (fd != -1) {
+		if (ftruncate(fd, len) != -1) {
+			if (write(fd, buf, len) == len) {
+				close(fd);
+				free(buf);
+				editorSetStatusMessage("%d bytes written to disk", len);
+				return;
+			}
+		}
+		close(fd);
+	}
+	free(buf);
+	editorSetStatusMessage("Can't save! I/O error: %s", strerror(errno));
 }
 
 /*** append buffer ***/
@@ -427,10 +493,18 @@ void editorProcessKeypress() {  // mapping keys to editor functions
 	int c = editorReadKey();
 	
 	switch (c) {
+		case '\r':  // Enter Key
+		/* TODO */
+		break;
+		
 		case CTRL_KEY('q'):
 			write(STDOUT_FILENO, "\x1b[2J", 4);
 	      	write(STDOUT_FILENO, "\x1b[H", 3);  // clear the screen by scrolling down
 			exit(0);
+			break;
+		
+		case CTRL_KEY('s'):
+			editorSave();
 			break;
 		
 		// move the cursor to the left/right of the file	
@@ -441,6 +515,12 @@ void editorProcessKeypress() {  // mapping keys to editor functions
 			if (E.cy < E.numrows)
 				E.cx = E.row[E.cy].size;
 			break;
+		
+		case BACKSPACE:  // Delete Function
+		case CTRL_KEY('h'):
+		case DEL_KEY:
+			/* TODO */
+		  	break;
 			
 		// move the cursor to the top/btm of the screen	
 		case PAGE_UP:
@@ -467,6 +547,14 @@ void editorProcessKeypress() {  // mapping keys to editor functions
 		case ARROW_LEFT:
 		case ARROW_RIGHT:
 			editorMoveCursor(c);
+			break;
+		
+		case CTRL_KEY('l'):  // Ignore Ctrl-L & Esc
+		case '\x1b':
+			break;
+
+		default:
+			editorInsertChar(c);
 			break;
 	}
 }
@@ -496,7 +584,7 @@ int main(int argc, char *argv[]) {
 		editorOpen(argv[1]);
 	}
 	
-	editorSetStatusMessage("HELP: Ctrl-Q = quit");
+	editorSetStatusMessage("HELP:  Ctrl-S = save | Ctrl-Q = quit");
 	
     while (1) {
     	editorRefreshScreen();
