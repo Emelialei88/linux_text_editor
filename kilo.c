@@ -21,6 +21,7 @@
 
 #define KILO_VERSION "0.0.1"
 #define KILO_TAB_STOP 8
+#define KILO_QUIT_TIMES 3
 
 #define CTRL_KEY(k) ((k) & 0x1f)
 
@@ -55,6 +56,7 @@ struct editorConfig {
 	int screencols;
 	int numrows;  // num of a file line
 	erow *row;  // file, each row in an erow struct	
+	int dirty;
 	char *filename;
 	char statusmsg[80];
 	time_t statusmsg_time;
@@ -227,7 +229,8 @@ void editorAppendRow(char *s, size_t len) {  // append a row (s) in struct E
 	editorUpdateRow(&E.row[at]);
 	
 	E.numrows++;
-}
+	E.dirty++;
+} 
 
 void editorRowInsertChar(erow *row, int at, int c) {  // insert a char c in the give row & place (at)
 	if (at < 0 || at > row->size) at = row->size;
@@ -236,6 +239,7 @@ void editorRowInsertChar(erow *row, int at, int c) {  // insert a char c in the 
 	row->size++;
 	row->chars[at] = c;
 	editorUpdateRow(row);
+	E.dirty++;
 }
 
 /*** editor operations ***/
@@ -288,6 +292,7 @@ void editorOpen(char *filename) {
 	}
 	free(line);
 	fclose(fp);	
+	E.dirty = 0;
 }
 
 void editorSave() {  // save an existing file
@@ -302,6 +307,7 @@ void editorSave() {  // save an existing file
 			if (write(fd, buf, len) == len) {
 				close(fd);
 				free(buf);
+				E.dirty = 0;
 				editorSetStatusMessage("%d bytes written to disk", len);
 				return;
 			}
@@ -393,7 +399,9 @@ void editorDrawStatusBar(struct abuf *ab) {
 	// draw a bar with inverted color
 	abAppend(ab, "\x1b[7m", 4);
 	char status[80], rstatus[80];
-	int len = snprintf(status, sizeof(status), "%.20s - %d lines", E.filename ? E.filename : "[No Name]", E.numrows);
+	 int len = snprintf(status, sizeof(status), "%.20s - %d lines %s",
+				E.filename ? E.filename : "[No Name]", E.numrows,
+				E.dirty ? "(modified)" : "");
 	int rlen = snprintf(rstatus, sizeof(rstatus), "%d/%d", E.cy + 1, E.numrows);
 	if (len > E.screencols) len = E.screencols;
 	abAppend(ab, status, len);
@@ -490,6 +498,8 @@ void editorMoveCursor(int key) {
 
 
 void editorProcessKeypress() {  // mapping keys to editor functions
+	static int quit_times = KILO_QUIT_TIMES;
+	
 	int c = editorReadKey();
 	
 	switch (c) {
@@ -498,6 +508,12 @@ void editorProcessKeypress() {  // mapping keys to editor functions
 		break;
 		
 		case CTRL_KEY('q'):
+			if (E.dirty && quit_times > 0) {  // urge user to press 3 more times
+				editorSetStatusMessage("WARNING!!! File has unsaved changes. "
+          		"Press Ctrl-Q %d more times to quit.", quit_times);
+		      	quit_times--;
+		      	return;          	
+			}
 			write(STDOUT_FILENO, "\x1b[2J", 4);
 	      	write(STDOUT_FILENO, "\x1b[H", 3);  // clear the screen by scrolling down
 			exit(0);
@@ -557,6 +573,7 @@ void editorProcessKeypress() {  // mapping keys to editor functions
 			editorInsertChar(c);
 			break;
 	}
+	quit_times = KILO_QUIT_TIMES;
 }
 
 /*** init ***/
@@ -569,6 +586,7 @@ void initEditor() {
 	E.coloff = 0;
 	E.numrows = 0;
 	E.row = NULL;
+	E.dirty = 0;
 	E.filename = NULL;
 	E.statusmsg[0] = '\0';  // no msg by default
 	E.statusmsg_time = 0;  // contain a timestamp
